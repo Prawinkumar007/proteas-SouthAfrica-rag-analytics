@@ -4,11 +4,22 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Add src to path
+# Resolve project root (one level up from src/)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Paths
+FAISS_INDEX_PATH = os.path.join(PROJECT_ROOT, "embeddings", "cricket_index.faiss")
+METADATA_PATH = os.path.join(PROJECT_ROOT, "embeddings", "metadata.json")
+PROCESSED_CSV_PATH = os.path.join(PROJECT_ROOT, "data", "processed_events.csv")
+RAW_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
+
+# Add src to path for local imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import ingest
+import embed
 from rag_chain import CricketRAG
 
-load_dotenv()
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
 # Page Config
 st.set_page_config(
@@ -43,8 +54,48 @@ st.markdown("""
         border: 1px solid #FFB612;
         margin-bottom: 10px;
     }
+    .build-banner {
+        background-color: #1a3a1a;
+        border: 2px solid #FFB612;
+        border-radius: 10px;
+        padding: 20px;
+        text-align: center;
+        color: #FFB612;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+def build_index():
+    """Run ingest and embed pipelines to build the FAISS index from raw data."""
+    os.makedirs(os.path.join(PROJECT_ROOT, "embeddings"), exist_ok=True)
+
+    st.markdown(
+        '<div class="build-banner">🏏 <b>First Launch Detected</b><br>'
+        'Building the cricket intelligence index from raw match data. This may take a few minutes…</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.spinner("Step 1/2 — Ingesting and processing raw match data…"):
+        ingest.process_data(RAW_DATA_DIR, PROCESSED_CSV_PATH)
+
+    if not os.path.exists(PROCESSED_CSV_PATH):
+        st.error(
+            "❌ Ingestion failed: no processed data was produced. "
+            "Please ensure `data/raw/sa_cricket_data.csv` exists and contains South Africa match records."
+        )
+        st.stop()
+
+    with st.spinner("Step 2/2 — Generating sentence embeddings and building FAISS index…"):
+        embed.generate_embeddings(PROCESSED_CSV_PATH, FAISS_INDEX_PATH, METADATA_PATH)
+
+    if os.path.exists(FAISS_INDEX_PATH):
+        st.success("✅ Index built successfully! Reloading the app…")
+        st.rerun()
+    else:
+        st.error("❌ Embedding step failed: FAISS index was not created. Check logs above.")
+        st.stop()
+
 
 @st.cache_resource
 def load_rag():
@@ -54,7 +105,14 @@ def load_rag():
         st.error(f"Failed to load RAG system: {e}")
         return None
 
+
 def main():
+    # ── Auto-build index on first launch ──────────────────────────────────────
+    if not os.path.exists(FAISS_INDEX_PATH):
+        build_index()
+        return  # rerun() above will restart; this return is a safety guard
+
+    # ── Normal app flow ────────────────────────────────────────────────────────
     st.title("🇿🇦 SA Cricket RAG Analytics System")
     st.markdown("### Professional Match Strategy & Tactical Intelligence")
 
@@ -66,21 +124,27 @@ def main():
 
         # Sidebar Filters
         st.sidebar.header("Intelligence Filters")
-        
+
         match_format = st.sidebar.selectbox("Match Format", ["All", "T20", "ODI", "Test"])
-        opponent = st.sidebar.selectbox("Opponent", ["All", "India", "Australia", "England", "Pakistan", "New Zealand", "Sri Lanka", "West Indies"])
+        opponent = st.sidebar.selectbox(
+            "Opponent",
+            ["All", "India", "Australia", "England", "Pakistan", "New Zealand", "Sri Lanka", "West Indies"]
+        )
         phase = st.sidebar.selectbox("Match Phase", ["All", "powerplay", "middle", "death"])
         year_range = st.sidebar.slider("Year Range", 2010, 2026, (2010, 2026))
 
         filters = {
             "format": match_format,
             "opponent": opponent,
-            "phase": phase
+            "phase": phase,
         }
 
         # Main UI
-        query = st.text_input("Ask about South Africa cricket strategy...", placeholder="e.g., Best bowling strategy in death overs vs India")
-        
+        query = st.text_input(
+            "Ask about South Africa cricket strategy…",
+            placeholder="e.g., Best bowling strategy in death overs vs India"
+        )
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             if st.button("Example: Death Overs vs India"):
@@ -101,11 +165,13 @@ def main():
             elif not query:
                 st.warning("Please enter a query.")
             else:
-                with st.spinner("Analyzing historical matches..."):
+                with st.spinner("Analyzing historical matches…"):
                     response, contexts = rag.generate_strategy(query, filters=filters)
-                    
-                    tab1, tab2, tab3 = st.tabs(["AI Strategy Recommendation", "Historical Match Contexts", "Analytics"])
-                    
+
+                    tab1, tab2, tab3 = st.tabs(
+                        ["AI Strategy Recommendation", "Historical Match Contexts", "Analytics"]
+                    )
+
                     with tab1:
                         st.markdown("### 🤖 Tactical Intelligence")
                         st.write(response)
@@ -116,25 +182,27 @@ def main():
                         if not contexts:
                             st.write("No matching historical contexts found.")
                         for ctx in contexts:
-                            st.markdown(f"""
-                            <div class="context-card">
-                                <strong>Similarity Score: {1 - ctx['score']:.4f}</strong><br>
-                                {ctx['text']}
-                            </div>
-                            """, unsafe_allow_html=True)
+                            st.markdown(
+                                f"""
+                                <div class="context-card">
+                                    <strong>Similarity Score: {1 - ctx['score']:.4f}</strong><br>
+                                    {ctx['text']}
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
 
                     with tab3:
                         st.markdown("### 📊 Analytics Brief")
                         if contexts:
-                            # Simple visual breakdown of retrieved data
-                            data = [c['metadata'] for c in contexts]
+                            data = [c["metadata"] for c in contexts]
                             df_ctx = pd.DataFrame(data)
-                            
+
                             st.subheader("Match Phase Distribution")
-                            st.bar_chart(df_ctx['phase'].value_counts())
-                            
+                            st.bar_chart(df_ctx["phase"].value_counts())
+
                             st.subheader("Opponent Frequency")
-                            st.bar_chart(df_ctx['opponent'].value_counts())
+                            st.bar_chart(df_ctx["opponent"].value_counts())
                         else:
                             st.write("Perform a query to see analytics.")
 
@@ -145,16 +213,5 @@ def main():
     st.divider()
     st.markdown("Data Source: [Cricsheet.org](https://cricsheet.org) | Model: Groq llama-3.3-70b-versatile")
 
-if __name__ == "__main__":
-    try:
-        os.makedirs("data", exist_ok=True)
-        if not os.path.exists("data/processed_events.csv"):
-            st.warning("⚠️ Data index not found. Please follow these steps:")
-            st.markdown("""
-            1. Place Cricsheet CSVs in `data/raw/`
-            2. Run `python src/ingest.py`
-            3. Run `python src/embed.py`
-            """)
-        main()
-    except Exception as e:
-        st.error(f"Critical Startup Error: {e}")
+
+main()
