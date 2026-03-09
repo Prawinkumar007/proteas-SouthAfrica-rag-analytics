@@ -4,14 +4,14 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Resolve project root (one level up from src/)
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Project root (one level up from src/)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Paths
-FAISS_INDEX_PATH = os.path.join(PROJECT_ROOT, "embeddings", "cricket_index.faiss")
-METADATA_PATH = os.path.join(PROJECT_ROOT, "embeddings", "metadata.json")
-PROCESSED_CSV_PATH = os.path.join(PROJECT_ROOT, "data", "processed_events.csv")
-RAW_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
+# Absolute paths
+INDEX_PATH = os.path.join(BASE_DIR, "embeddings", "cricket_index.faiss")
+METADATA_PATH = os.path.join(BASE_DIR, "embeddings", "metadata.json")
+DATA_PATH = os.path.join(BASE_DIR, "data", "processed_events.csv")
+RAW_DATA_DIR = os.path.join(BASE_DIR, "data", "raw")
 
 # Add src to path for local imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -19,7 +19,7 @@ import ingest
 import embed
 from rag_chain import CricketRAG
 
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # Page Config
 st.set_page_config(
@@ -68,7 +68,7 @@ st.markdown("""
 
 def build_index():
     """Run ingest and embed pipelines to build the FAISS index from raw data."""
-    os.makedirs(os.path.join(PROJECT_ROOT, "embeddings"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "embeddings"), exist_ok=True)
 
     st.markdown(
         '<div class="build-banner">🏏 <b>First Launch Detected</b><br>'
@@ -77,9 +77,9 @@ def build_index():
     )
 
     with st.spinner("Step 1/2 — Ingesting and processing raw match data…"):
-        ingest.process_data(RAW_DATA_DIR, PROCESSED_CSV_PATH)
+        ingest.process_data(RAW_DATA_DIR, DATA_PATH)
 
-    if not os.path.exists(PROCESSED_CSV_PATH):
+    if not os.path.exists(DATA_PATH):
         st.error(
             "❌ Ingestion failed: no processed data was produced. "
             "Please ensure `data/raw/sa_cricket_data.csv` exists and contains South Africa match records."
@@ -87,9 +87,9 @@ def build_index():
         st.stop()
 
     with st.spinner("Step 2/2 — Generating sentence embeddings and building FAISS index…"):
-        embed.generate_embeddings(PROCESSED_CSV_PATH, FAISS_INDEX_PATH, METADATA_PATH)
+        embed.generate_embeddings(DATA_PATH, INDEX_PATH, METADATA_PATH)
 
-    if os.path.exists(FAISS_INDEX_PATH):
+    if os.path.exists(INDEX_PATH):
         st.success("✅ Index built successfully! Reloading the app…")
         st.rerun()
     else:
@@ -108,7 +108,7 @@ def load_rag():
 
 def main():
     # ── Auto-build index on first launch ──────────────────────────────────────
-    if not os.path.exists(FAISS_INDEX_PATH):
+    if not os.path.exists(INDEX_PATH):
         build_index()
         return  # rerun() above will restart; this return is a safety guard
 
