@@ -67,33 +67,47 @@ st.markdown("""
 
 
 def build_index():
-    """Run ingest and embed pipelines to build the FAISS index from raw data."""
+    """Build the FAISS index on first launch, compatible with Streamlit Cloud."""
+    import glob as _glob
+    import shutil
+
     os.makedirs(os.path.join(BASE_DIR, "embeddings"), exist_ok=True)
 
     st.markdown(
         '<div class="build-banner">🏏 <b>First Launch Detected</b><br>'
-        'Building the cricket intelligence index from raw match data. This may take a few minutes…</div>',
+        'Building the cricket intelligence index. This may take a few minutes…</div>',
         unsafe_allow_html=True,
     )
 
-    with st.spinner("Step 1/2 — Ingesting and processing raw match data…"):
-        ingest.process_data(RAW_DATA_DIR, DATA_PATH)
-
+    # ── Step 1: Ingest raw data (skip if processed CSV already exists) ──────────
     if not os.path.exists(DATA_PATH):
-        st.error(
-            "❌ Ingestion failed: no processed data was produced. "
-            "Please ensure `data/raw/sa_cricket_data.csv` exists and contains South Africa match records."
-        )
-        st.stop()
+        with st.spinner("Step 1/2 — Ingesting raw match data…"):
+            # If data/raw/ is empty, seed it from the committed data/sa_cricket_data.csv
+            fallback_csv = os.path.join(BASE_DIR, "data", "sa_cricket_data.csv")
+            raw_csvs = _glob.glob(os.path.join(RAW_DATA_DIR, "*.csv"))
+            if not raw_csvs and os.path.exists(fallback_csv):
+                os.makedirs(RAW_DATA_DIR, exist_ok=True)
+                shutil.copy(fallback_csv, RAW_DATA_DIR)
+            ingest.process_data(RAW_DATA_DIR, DATA_PATH)
 
-    with st.spinner("Step 2/2 — Generating sentence embeddings and building FAISS index…"):
+        if not os.path.exists(DATA_PATH):
+            st.error(
+                "❌ Ingestion failed: processed match data could not be created. "
+                "Please ensure `data/sa_cricket_data.csv` or `data/raw/*.csv` is present."
+            )
+            st.stop()
+    else:
+        st.info("✔ Processed match data found — skipping ingestion step.")
+
+    # ── Step 2: Generate embeddings and build FAISS index ──────────────────────
+    with st.spinner("Step 2/2 — Generating embeddings and building FAISS index…"):
         embed.generate_embeddings(DATA_PATH, INDEX_PATH, METADATA_PATH)
 
     if os.path.exists(INDEX_PATH):
         st.success("✅ Index built successfully! Reloading the app…")
         st.rerun()
     else:
-        st.error("❌ Embedding step failed: FAISS index was not created. Check logs above.")
+        st.error("❌ Embedding step failed: FAISS index was not created.")
         st.stop()
 
 
