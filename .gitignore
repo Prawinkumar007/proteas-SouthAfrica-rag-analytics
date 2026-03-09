@@ -1,5 +1,2 @@
 .env
-data/raw/
-data/processed_events.csv
-embeddings/
 __pycache__/
